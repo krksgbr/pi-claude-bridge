@@ -2,6 +2,8 @@
 
 ## UNRELEASED
 
+- **Fix: bridge-owned compaction honors the configured compaction model role** — the `compaction` role in `model-roles.json` (global `~/.pi/agent`, project `.pi/`) now selects the model for bridge compaction instead of always using the active model. A configured non-bridge model leaves compaction to Pi; an unset role keeps the active bridge model; a missing or malformed file is ignored. If the configured model cannot be resolved, compaction is cancelled loudly rather than silently using the wrong model.
+
 - **Fix: reject leaked pi harness prompts (issue #88)** — Prompts that somehow still reference pi's harness now fail loudly instead of being forwarded and potentially being billed as extra usage. See note in README.
 - **Fix: AskClaude reports its effective configured defaults (issue #65)** — its schema, description, and TUI now agree on mode and isolation, and disabling full mode removes it from the enum.
 - **Bump: require pi ≥0.86.1, drop pre-0.86 compat** — `src/transcript.ts` now replays prompt/tool state through pi-ai's helpers instead of a vendored copy (canonical section re-rank stays local). Also removes the event-stream factory fallback and version-tolerance casts. devDeps move to `^0.87.1`; Agent SDK to `^0.3.280` (the API now rejects older clients); fixes a model-catalog test bug from 0.87.1's added `claude-opus-5-5`.

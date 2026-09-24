@@ -16,6 +16,7 @@ import { extractAllToolResults as _extractAllToolResults, type McpResult } from 
 import { QueryContext, ctx } from "./query-state.js";
 import { makePromptStream, userMessage, type PromptStream } from "./prompt-stream.js";
 import { claudeCodeSettings, loadConfig, markStartupNoticeShown, type Config } from "./config.js";
+import { resolveConfiguredCompactionModel } from "./compaction-model.js";
 import {
 	collectPromptSkills,
 	projectPromptCapture,
@@ -435,6 +436,30 @@ function isolatedStreamFn(model: Model<any>, context: Context, options?: SimpleS
 	const stream = createAssistantMessageEventStream();
 	void runIsolatedSummary(model, context, options, stream);
 	return stream;
+}
+
+interface CompactionModelSelection {
+	model: Model<any>;
+	streamFn: typeof isolatedStreamFn;
+}
+
+// Bridge-owned compaction runs on the active bridge model unless the compaction
+// model role points at a specific claude-bridge model. A configured non-bridge
+// model leaves compaction to Pi (or another extension that owns the role).
+function selectCompactionModel(ctx: ExtensionContext): CompactionModelSelection | undefined {
+	const currentIsBridge = ctx.model?.baseUrl === "claude-bridge";
+	const ref = resolveConfiguredCompactionModel(ctx.cwd ?? process.cwd());
+	if (!ref) {
+		return currentIsBridge && ctx.model ? { model: ctx.model, streamFn: isolatedStreamFn } : undefined;
+	}
+	const slash = ref.indexOf("/");
+	if (slash <= 0 || slash === ref.length - 1) {
+		throw new Error(`Configured compaction model must be an exact provider/model id, got: ${ref}`);
+	}
+	const model = ctx.modelRegistry.find(ref.slice(0, slash), ref.slice(slash + 1));
+	if (!model) throw new Error(`Configured compaction model ${ref} (model role) was not found`);
+	if (model.baseUrl !== "claude-bridge") return undefined;
+	return { model, streamFn: isolatedStreamFn };
 }
 
 async function runIsolatedSummary(
@@ -2168,9 +2193,19 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
-		if (ctx.model?.baseUrl !== "claude-bridge") return undefined;
+		let selection: CompactionModelSelection | undefined;
+		try {
+			selection = selectCompactionModel(ctx);
+		} catch (err) {
+			const msg = errorMessage(err);
+			debug("session_before_compact: compaction model selection failed", err);
+			ctx.ui?.notify?.(`Claude bridge compact failed (${msg}); cancelled to avoid using the wrong model.`, "error");
+			return { cancel: true };
+		}
+		if (!selection) return undefined;
 		debug(
 			`session_before_compact: takeover reason=${event.reason} willRetry=${event.willRetry} ` +
+			`model=${selection.model.provider}/${selection.model.id} ` +
 			`isSplitTurn=${event.preparation.isSplitTurn} messages=${event.preparation.messagesToSummarize.length} ` +
 			`turnPrefix=${event.preparation.turnPrefixMessages.length}`,
 		);
@@ -2178,13 +2213,13 @@ export default function (pi: ExtensionAPI) {
 			reinjectPriorCompactionFileOps(event.branchEntries, event.preparation);
 			const compaction = await compact(
 				event.preparation,
-				ctx.model,
+				selection.model,
 				undefined,
 				undefined,
 				event.customInstructions,
 				event.signal,
 				undefined,
-				isolatedStreamFn,
+				selection.streamFn,
 				undefined,
 			);
 			debug(`session_before_compact: takeover complete summaryLen=${compaction.summary.length}`);
@@ -2193,7 +2228,7 @@ export default function (pi: ExtensionAPI) {
 			const msg = errorMessage(err);
 			debug("session_before_compact: takeover failed; cancelling to avoid native compact fallback", err);
 			ctx.ui?.notify?.(
-				`Claude bridge compact failed (${msg}); cancelled to avoid known hang. Retry, switch model, or reduce context.`,
+				`Claude bridge compact failed (${msg}); cancelled without falling back to the active model. Fix compaction model/auth or reduce context.`,
 				"error",
 			);
 			return { cancel: true };
