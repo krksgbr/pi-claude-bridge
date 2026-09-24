@@ -2,7 +2,7 @@
 
 ## UNRELEASED
 
-- **Fix: bridge-owned compaction honors the configured compaction model role** — the `compaction` role in `model-roles.json` (global `~/.pi/agent`, project `.pi/`) now selects the model for bridge compaction instead of always using the active model. A configured non-bridge model leaves compaction to Pi; an unset role keeps the active bridge model; a missing or malformed file is ignored. If the configured model cannot be resolved, compaction is cancelled loudly rather than silently using the wrong model.
+- **Fix: bridge-owned compaction and branch summaries honor the configured compaction model role** — the `compaction` role in `model-roles.json` (global `~/.pi/agent`, project `.pi/`) now selects the model for both `/compact` and rewind/fork branch summaries instead of always using the active model. A configured non-bridge model leaves them to Pi; an unset role keeps the active bridge model; a missing or malformed file is ignored. If the configured model cannot be resolved, the operation is cancelled loudly rather than silently using the wrong model.
 
 - **Fix: reject leaked pi harness prompts (issue #88)** — Prompts that somehow still reference pi's harness now fail loudly instead of being forwarded and potentially being billed as extra usage. See note in README.
 - **Fix: AskClaude reports its effective configured defaults (issue #65)** — its schema, description, and TUI now agree on mode and isolation, and disabling full mode removes it from the enum.

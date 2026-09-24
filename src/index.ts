@@ -789,6 +789,7 @@ export const __test = {
 	CC_CHILD_ENV,
 	buildMcpServers,
 	branchSummaryOutcome,
+	selectCompactionModel,
 	get promptCaptures() {
 		return promptCaptures;
 	},
@@ -2260,17 +2261,26 @@ export default function (pi: ExtensionAPI) {
 	// Take it over the way compaction is taken over: the summary runs as its own
 	// Claude Code subprocess, never touching the live session or the resolver.
 	pi.on("session_before_tree", async (event, ctx) => {
-		if (ctx.model?.baseUrl !== "claude-bridge") return undefined;
 		const { entriesToSummarize, userWantsSummary, customInstructions, replaceInstructions } = event.preparation;
 		if (!userWantsSummary || entriesToSummarize.length === 0) return undefined;
-		debug(`session_before_tree: takeover entries=${entriesToSummarize.length} target=${event.preparation.targetId.slice(0, 8)}`);
+		let selection: CompactionModelSelection | undefined;
+		try {
+			selection = selectCompactionModel(ctx);
+		} catch (err) {
+			const msg = errorMessage(err);
+			debug("session_before_tree: compaction model selection failed", err);
+			ctx.ui?.notify?.(`Claude bridge branch summary failed (${msg}); cancelled to avoid using the wrong model.`, "error");
+			return { cancel: true };
+		}
+		if (!selection) return undefined;
+		debug(`session_before_tree: takeover entries=${entriesToSummarize.length} target=${event.preparation.targetId.slice(0, 8)} model=${selection.model.provider}/${selection.model.id}`);
 		try {
 			const result = await generateBranchSummary(entriesToSummarize, {
-				model: ctx.model,
+				model: selection.model,
 				signal: event.signal,
 				customInstructions,
 				replaceInstructions,
-				streamFn: isolatedStreamFn,
+				streamFn: selection.streamFn,
 			});
 			return branchSummaryOutcome(result);
 		} catch (err) {
